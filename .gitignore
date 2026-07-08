@@ -1,0 +1,7 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.exe
+terraform-provider-aws*
+terraform-provider-*
