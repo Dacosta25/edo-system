@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: edo-system — Event-driven order processing architecture
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.11
+
+  Api:
+    Name: edo-system-api-v3
+    Cors:
+      AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"
+
+Resources:
+
+  ############################################
+  # 1. INGESTION LAMBDA → SNS → SQS (OrderQueue)
+  ############################################
+
+  IngestionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ingestion-service
+      Handler: app.handler
+      CodeUri: ./services/ingestion-service/
+      Environment:
+        Variables:
+          TOPIC_ARN: !GetAtt OrderTopic.TopicArn
+          ORDERS_TABLE: !Ref OrdersTable
+      Policies:
+        - SNSPublishMessagePolicy:
+            TopicName: !Ref OrderTopic
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Events:
+        OrdersApi:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: POST
+        OrdersOptions:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: OPTIONS
+
+  OrderTopic:
+    Type: AWS::SNS::Topic
+
+  OrderQueue:
+    Type: AWS::SQS::Queue
+
+  OrderQueueSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OrderTopic
+      Protocol: sqs
+      Endpoint: !GetAtt OrderQueue.Arn
+      RawMessageDelivery: true
+
+  OrderQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref OrderQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowSNSPublish
+            Effect: Allow
+            Principal: "*"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt OrderQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref OrderTopic
+
+  ############################################
+  # 2. WORKER LAMBDA — consumes OrderQueue
+  ############################################
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: inventory-worker
+      Handler: app.handler
+      CodeUri: services/inventory-worker/
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref InventoryTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTable
+      Events:
+        OrderQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrderQueue.Arn
+            BatchSize: 1
+
+  ############################################
+  # 3. INVENTORY TABLE (Stock levels)
+  ############################################
+
+  InventoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: ItemID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ItemID
+          KeyType: HASH
+
+  ############################################
+  # 4. ORDERS TABLE (for GET /orders)
+  ############################################
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: OrderID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: OrderID
+          KeyType: HASH
+
+  ############################################
+  # 5. GET ORDERS LAMBDA — reads OrdersTable
+  ############################################
+
+  GetOrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./services/get-orders-service/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref OrdersTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref OrdersTable
+      Events:
+        GetOrdersApi:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

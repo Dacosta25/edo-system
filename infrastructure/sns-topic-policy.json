@@ -1,0 +1,13 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::637423328283:role/edo-system-IngestionFunctionRole-7Rd6ZGLI7LDO"
+      },
+      "Action": "SNS:Publish",
+      "Resource": "arn:aws:sns:eu-west-2:637423328283:OrderTopic"
+    }
+  ]
+}

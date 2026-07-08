@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "edo-system \u2014 Event-driven order processing architecture"
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.11
+  Api:
+    Name: edo-system-api-v3
+    Cors:
+      AllowMethods: '''GET,POST,DELETE,OPTIONS'''
+      AllowHeaders: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'''
+      AllowOrigin: '''*'''
+Resources:
+  IngestionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ingestion-service
+      Handler: app.handler
+      CodeUri: IngestionFunction
+      Environment:
+        Variables:
+          TOPIC_ARN:
+            Fn::GetAtt:
+            - OrderTopic
+            - TopicArn
+          ORDERS_TABLE:
+            Ref: OrdersTable
+      Policies:
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Ref: OrderTopic
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: OrdersTable
+      Events:
+        OrdersApi:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: POST
+        OrdersOptions:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: OPTIONS
+    Metadata:
+      SamResourceId: IngestionFunction
+  OrderTopic:
+    Type: AWS::SNS::Topic
+  OrderQueue:
+    Type: AWS::SQS::Queue
+  OrderQueueSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn:
+        Ref: OrderTopic
+      Protocol: sqs
+      Endpoint:
+        Fn::GetAtt:
+        - OrderQueue
+        - Arn
+      RawMessageDelivery: true
+  OrderQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+      - Ref: OrderQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowSNSPublish
+          Effect: Allow
+          Principal: '*'
+          Action: sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - OrderQueue
+            - Arn
+          Condition:
+            ArnEquals:
+              aws:SourceArn:
+                Ref: OrderTopic
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: inventory-worker
+      Handler: app.handler
+      CodeUri: WorkerFunction
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: InventoryTable
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: InventoryTable
+      Events:
+        OrderQueueEvent:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - OrderQueue
+              - Arn
+            BatchSize: 1
+    Metadata:
+      SamResourceId: WorkerFunction
+  InventoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: ItemID
+        AttributeType: S
+      KeySchema:
+      - AttributeName: ItemID
+        KeyType: HASH
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: OrderID
+        AttributeType: S
+      KeySchema:
+      - AttributeName: OrderID
+        KeyType: HASH
+  GetOrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: GetOrdersFunction
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: OrdersTable
+      Events:
+        GetOrdersApi:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: GET
+    Metadata:
+      SamResourceId: GetOrdersFunction
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
