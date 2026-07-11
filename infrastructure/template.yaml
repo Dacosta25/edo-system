@@ -24,9 +24,9 @@ Resources:
   IngestionFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: ingestion-service
+      FunctionName: ingestion_service
       Handler: app.handler
-      CodeUri: ./services/ingestion-service/
+      CodeUri: ./services/ingestion_service/
       Environment:
         Variables:
           TOPIC_ARN: !GetAtt OrderTopic.TopicArn
@@ -86,9 +86,9 @@ Resources:
   WorkerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: inventory-worker
+      FunctionName: inventory_worker
       Handler: app.handler
-      CodeUri: services/inventory-worker/
+      CodeUri: services/inventory_worker/
       Environment:
         Variables:
           TABLE_NAME: !Ref InventoryTable
@@ -139,7 +139,7 @@ Resources:
   GetOrdersFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ./services/get-orders-service/
+      CodeUri: ./services/get_orders_service/
       Handler: app.lambda_handler
       Runtime: python3.11
       Environment:
